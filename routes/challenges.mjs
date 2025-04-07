@@ -1,9 +1,19 @@
 import express from "express";
 import Challenge from "../models/Challenge.mjs";
 import Course from "../models/Course.mjs";
-import Reward from "../models/Reward.mjs";
 
 const router = express.Router();
+
+// Middleware to validate challenge ID
+const validateChallengeId = (req, res, next) => {
+  if (!Challenge.isValidId(req.params.id)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid challenge ID format",
+    });
+  }
+  next();
+};
 
 // GET all challenges with optional filtering
 router.get("/", async (req, res) => {
@@ -11,161 +21,48 @@ router.get("/", async (req, res) => {
     const { course, isActive } = req.query;
     const filter = {};
 
-    if (course) filter.course = course;
-    if (isActive) filter.isActive = isActive === "true";
+    if (course && Challenge.isValidId(course)) {
+      filter.course = course;
+    }
+    if (isActive) {
+      filter.isActive = isActive === "true";
+    }
 
-    const challenges = await Challenge.find(filter)
-      .populate("course", "title instructor")
-      .sort({ dueDate: 1 });
+    const challenges = await Challenge.findAll(filter);
 
-    res.json({
+    // For native driver, we need to manually populate course data
+    const populatedChallenges = await Promise.all(
+      challenges.map(async (challenge) => {
+        if (challenge.course) {
+          const course = await Course.findById(challenge.course);
+          return {
+            ...challenge,
+            course: {
+              _id: course._id,
+              title: course.title,
+              instructor: course.instructor,
+            },
+          };
+        }
+        return challenge;
+      })
+    );
+
+    res.status(200).json({
       success: true,
-      count: challenges.length,
-      data: challenges,
+      count: populatedChallenges.length,
+      data: populatedChallenges,
     });
-  } catch (err) {
+  } catch (error) {
     res.status(500).json({
       success: false,
-      error: "Server Error: " + err.message,
+      error: "Server Error: " + error.message,
     });
   }
 });
 
 // GET single challenge by ID
-router.get("/:id", async (req, res) => {
-  try {
-    const challenge = await Challenge.findById(req.params.id).populate(
-      "course",
-      "title description pointsValue"
-    );
-
-    if (!challenge) {
-      return res.status(404).json({
-        success: false,
-        error: "Challenge not found",
-      });
-    }
-
-    res.json({
-      success: true,
-      data: challenge,
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: "Server Error: " + err.message,
-    });
-  }
-});
-
-// POST create new challenge
-router.post("/", async (req, res) => {
-  try {
-    // Validate course exists
-    const course = await Course.findById(req.body.course);
-    if (!course) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid course ID",
-      });
-    }
-
-    const challenge = new Challenge({
-      title: req.body.title,
-      description: req.body.description,
-      course: req.body.course,
-      points: req.body.points || course.pointsValue * 0.2, // Default to 20% of course points
-      dueDate: req.body.dueDate,
-      isActive: req.body.isActive !== false, // Default true
-      completionCriteria: req.body.completionCriteria,
-    });
-
-    await challenge.save();
-
-    // Add challenge to course's challenges array
-    course.challenges.push(challenge._id);
-    await course.save();
-
-    res.status(201).json({
-      success: true,
-      data: challenge,
-      message: "Challenge created successfully",
-    });
-  } catch (err) {
-    res.status(400).json({
-      success: false,
-      error: "Validation Error: " + err.message,
-    });
-  }
-});
-
-// PUT update challenge
-router.put("/:id", async (req, res) => {
-  try {
-    const challenge = await Challenge.findByIdAndUpdate(
-      req.params.id,
-      {
-        title: req.body.title,
-        description: req.body.description,
-        points: req.body.points,
-        dueDate: req.body.dueDate,
-        isActive: req.body.isActive,
-        completionCriteria: req.body.completionCriteria,
-      },
-      { new: true, runValidators: true }
-    );
-
-    if (!challenge) {
-      return res.status(404).json({
-        success: false,
-        error: "Challenge not found",
-      });
-    }
-
-    res.json({
-      success: true,
-      data: challenge,
-      message: "Challenge updated successfully",
-    });
-  } catch (err) {
-    res.status(400).json({
-      success: false,
-      error: "Validation Error: " + err.message,
-    });
-  }
-});
-
-// DELETE challenge
-router.delete("/:id", async (req, res) => {
-  try {
-    const challenge = await Challenge.findByIdAndDelete(req.params.id);
-
-    if (!challenge) {
-      return res.status(404).json({
-        success: false,
-        error: "Challenge not found",
-      });
-    }
-
-    // Remove challenge from course's challenges array
-    await Course.findByIdAndUpdate(challenge.course, {
-      $pull: { challenges: challenge._id },
-    });
-
-    res.json({
-      success: true,
-      message: "Challenge deleted successfully",
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: "Server Error: " + err.message,
-    });
-  }
-});
-
-// PATCH toggle challenge active status
-router.patch("/:id/toggle", async (req, res) => {
+router.get("/:id", validateChallengeId, async (req, res) => {
   try {
     const challenge = await Challenge.findById(req.params.id);
 
@@ -176,20 +73,178 @@ router.patch("/:id/toggle", async (req, res) => {
       });
     }
 
-    challenge.isActive = !challenge.isActive;
-    await challenge.save();
+    // Manually populate course data
+    if (challenge.course) {
+      const course = await Course.findById(challenge.course);
+      challenge.course = {
+        _id: course._id,
+        title: course.title,
+        description: course.description,
+        pointsValue: course.pointsValue,
+      };
+    }
 
-    res.json({
+    res.status(200).json({
       success: true,
       data: challenge,
-      message: `Challenge marked as ${
-        challenge.isActive ? "active" : "inactive"
-      }`,
     });
-  } catch (err) {
+  } catch (error) {
     res.status(500).json({
       success: false,
-      error: "Server Error: " + err.message,
+      error: "Server Error: " + error.message,
+    });
+  }
+});
+
+// POST create new challenge
+router.post("/", async (req, res) => {
+  try {
+    // Validate input
+    const validationErrors = Challenge.validateChallenge(req.body);
+    if (validationErrors) {
+      return res.status(400).json({
+        success: false,
+        errors: validationErrors,
+      });
+    }
+
+    // Validate course exists
+    const course = await Course.findById(req.body.course);
+    if (!course) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid course ID",
+      });
+    }
+
+    // Calculate default points if not provided
+    const points = req.body.points || course.pointsValue * 0.2;
+
+    const newChallenge = {
+      title: req.body.title,
+      description: req.body.description,
+      course: req.body.course,
+      points: points,
+      dueDate: req.body.dueDate,
+      isActive: req.body.isActive !== false,
+      completionCriteria: req.body.completionCriteria,
+      createdAt: new Date(),
+    };
+
+    const result = await Challenge.create(newChallenge);
+
+    // Add challenge to course's challenges array
+    await Challenge.addToCourse(result.insertedId, req.body.course);
+
+    res.status(201).json({
+      success: true,
+      data: {
+        _id: result.insertedId,
+        ...newChallenge,
+      },
+      message: "Challenge created successfully",
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: "Validation Error: " + error.message,
+    });
+  }
+});
+
+// PUT update challenge
+router.put("/:id", validateChallengeId, async (req, res) => {
+  try {
+    const updates = {
+      title: req.body.title,
+      description: req.body.description,
+      points: req.body.points,
+      dueDate: req.body.dueDate,
+      isActive: req.body.isActive,
+      completionCriteria: req.body.completionCriteria,
+    };
+
+    const result = await Challenge.update(req.params.id, updates);
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "Challenge not found",
+      });
+    }
+
+    const updatedChallenge = await Challenge.findById(req.params.id);
+
+    res.status(200).json({
+      success: true,
+      data: updatedChallenge,
+      message: "Challenge updated successfully",
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: "Validation Error: " + error.message,
+    });
+  }
+});
+
+// DELETE challenge
+router.delete("/:id", validateChallengeId, async (req, res) => {
+  try {
+    const challenge = await Challenge.findById(req.params.id);
+
+    if (!challenge) {
+      return res.status(404).json({
+        success: false,
+        error: "Challenge not found",
+      });
+    }
+
+    // Remove challenge from course first
+    await Challenge.removeFromCourse(req.params.id, challenge.course);
+
+    // Then delete the challenge
+    await Challenge.delete(req.params.id);
+
+    res.status(200).json({
+      success: true,
+      message: "Challenge deleted successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: "Server Error: " + error.message,
+    });
+  }
+});
+
+// PATCH toggle challenge active status
+router.patch("/:id/toggle", validateChallengeId, async (req, res) => {
+  try {
+    const challenge = await Challenge.findById(req.params.id);
+
+    if (!challenge) {
+      return res.status(404).json({
+        success: false,
+        error: "Challenge not found",
+      });
+    }
+
+    const result = await Challenge.toggleActive(req.params.id);
+
+    const updatedChallenge = await Challenge.findById(req.params.id);
+
+    res.status(200).json({
+      success: true,
+      data: updatedChallenge,
+      message: `Challenge marked as ${
+        updatedChallenge.isActive ? "active" : "inactive"
+      }`,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: "Server Error: " + error.message,
     });
   }
 });

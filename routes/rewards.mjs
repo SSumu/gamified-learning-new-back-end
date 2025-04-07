@@ -3,39 +3,55 @@ import Reward from "../models/Reward.mjs";
 
 const router = express.Router();
 
+// Middleware to validate reward ID
+const validateRewardId = (req, res, next) => {
+  if (!Reward.isValidId(req.params.id)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid reward ID format",
+    });
+  }
+  next();
+};
+
 // Get all rewards
 router.get("/", async (req, res) => {
   try {
-    const rewards = await Reward.find();
-    res.json(rewards);
-  } catch (err) {
+    const rewards = await Reward.findAll();
+    res.status(200).json({
+      success: true,
+      data: rewards,
+    });
+  } catch (error) {
     res.status(500).json({
       success: false,
       message: "Failed to fetch rewards",
-      error: err.message,
+      error: error.message,
     });
   }
 });
 
 // Get single reward
-router.get("/:id", async (req, res) => {
+router.get("/:id", validateRewardId, async (req, res) => {
   try {
     const reward = await Reward.findById(req.params.id);
+
     if (!reward) {
       return res.status(404).json({
         success: false,
         message: "Reward not found",
       });
     }
-    res.json({
+
+    res.status(200).json({
       success: true,
       data: reward,
     });
-  } catch (err) {
+  } catch (error) {
     res.status(500).json({
       success: false,
       message: "Failed to fetch reward",
-      error: err.message,
+      error: error.message,
     });
   }
 });
@@ -43,102 +59,109 @@ router.get("/:id", async (req, res) => {
 // Create new reward
 router.post("/", async (req, res) => {
   try {
-    const reward = new Reward({
+    // Validate input
+    const validationErrors = Reward.validateReward(req.body);
+    if (validationErrors) {
+      return res.status(400).json({
+        success: false,
+        errors: validationErrors,
+      });
+    }
+
+    const rewardData = {
       name: req.body.name,
       description: req.body.description,
       icon: req.body.icon,
       pointsRequired: req.body.pointsRequired,
       rarity: req.body.rarity || "common",
-    });
+    };
 
-    // Validate required fields
-    if (
-      !reward.name ||
-      !reward.description ||
-      !reward.icon ||
-      reward.pointsRequired === undefined
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Missing required fields (name, description, icon, pointsRequired)",
-      });
-    }
+    const result = await Reward.create(rewardData);
 
-    const savedReward = await reward.save();
     res.status(201).json({
       success: true,
-      data: savedReward,
+      data: {
+        _id: result.insertedId,
+        ...rewardData,
+        createdAt: new Date(),
+      },
       message: "Reward created successfully",
     });
-  } catch (err) {
+  } catch (error) {
     res.status(400).json({
       success: false,
       message: "Failed to create reward",
-      error: err.message,
+      error: error.message,
     });
   }
 });
 
 // Update reward
-router.put("/:id", async (req, res) => {
+router.put("/:id", validateRewardId, async (req, res) => {
   try {
-    const reward = await Reward.findByIdAndUpdate(
-      req.params.id,
-      {
-        $set: {
-          name: req.body.name,
-          description: req.body.description,
-          icon: req.body.icon,
-          pointsRequired: req.body.pointsRequired,
-          rarity: req.body.rarity,
-        },
-      },
-      { new: true, runValidators: true }
-    );
+    // Validate input
+    const validationErrors = Reward.validateReward(req.body);
+    if (validationErrors) {
+      return res.status(400).json({
+        success: false,
+        errors: validationErrors,
+      });
+    }
 
-    if (!reward) {
+    const updates = {
+      name: req.body.name,
+      description: req.body.description,
+      icon: req.body.icon,
+      pointsRequired: req.body.pointsRequired,
+      rarity: req.body.rarity || "common",
+    };
+
+    const result = await Reward.update(req.params.id, updates);
+
+    if (result.matchedCount === 0) {
       return res.status(404).json({
         success: false,
         message: "Reward not found",
       });
     }
 
-    res.json({
+    const updatedReward = await Reward.findById(req.params.id);
+
+    res.status(200).json({
       success: true,
-      data: reward,
+      data: updatedReward,
       message: "Reward updated successfully",
     });
-  } catch (err) {
+  } catch (error) {
     res.status(400).json({
       success: false,
       message: "Failed to update reward",
-      error: err.message,
+      error: error.message,
     });
   }
 });
 
 // Delete reward
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", validateRewardId, async (req, res) => {
   try {
-    const reward = await Reward.findByIdAndDelete(req.params.id);
+    const result = await Reward.delete(req.params.id);
 
-    if (!reward) {
+    if (result.deletedCount === 0) {
       return res.status(404).json({
         success: false,
         message: "Reward not found",
       });
     }
 
-    res.json({
+    res.status(200).json({
       success: true,
       message: "Reward deleted successfully",
     });
-  } catch (err) {
+  } catch (error) {
     res.status(500).json({
       success: false,
       message: "Failed to delete reward",
-      error: err.message,
+      error: error.message,
     });
   }
 });

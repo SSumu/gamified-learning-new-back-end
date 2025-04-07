@@ -1,44 +1,109 @@
-import mongoose from "mongoose";
+import { getDb } from "../config/db.mjs";
 
-const rewardSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, "Reward name is required"],
-    trim: true,
-    maxlength: [50, "Name cannot exceed 50 characters"],
-  },
-  description: {
-    type: String,
-    required: [true, "Description is required"],
-    trim: true,
-    maxlength: [500, "Description cannot exceed 500 characters"],
-  },
-  icon: {
-    type: String,
-    required: [true, "Icon URL is required"],
-    match: [/^https?:\/\/.+\..+/, "Please enter a valid URL"],
-  },
-  pointsRequired: {
-    type: Number,
-    required: [true, "Points required is mandatory"],
-    min: [0, "Points cannot be negative"],
-  },
-  rarity: {
-    type: String,
-    enum: {
-      values: ["common", "rare", "epic", "legendary"],
-      message: "{VALUE} is not a valid rarity",
-    },
-    default: "common",
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-    immutable: true,
-  },
-});
+const collectionName = "rewards";
 
-// Add index for better query performance
-rewardSchema.index({ pointsRequired: 1, rarity: 1 });
+const Reward = {
+  // Create a new reward
+  create: async (rewardData) => {
+    const db = await getDb();
+    const result = await db.collection(collectionName).insertOne({
+      ...rewardData,
+      createdAt: new Date(),
+    });
+    return result;
+  },
 
-export default mongoose.model("Reward", rewardSchema);
+  // Find all rewards
+  findAll: async (filter = {}) => {
+    const db = await getDb();
+    return await db.collection(collectionName).find(filter).toArray();
+  },
+
+  // Find reward by ID
+  findById: async (id) => {
+    const db = await getDb();
+    return await db.collection(collectionName).findOne({
+      _id: db.ObjectId.createFromHexString(id),
+    });
+  },
+
+  // Update reward
+  update: async (id, updates) => {
+    const db = await getDb();
+    const result = await db
+      .collection(collectionName)
+      .updateOne(
+        { _id: db.ObjectId.createFromHexString(id) },
+        { $set: updates }
+      );
+    return result;
+  },
+
+  // Delete reward
+  delete: async (id) => {
+    const db = await getDb();
+    const result = await db.collection(collectionName).deleteOne({
+      _id: db.ObjectId.createFromHexString(id),
+    });
+    return result;
+  },
+
+  // Check if ID is valid
+  isValidId: (id) => {
+    try {
+      const db = getDb();
+      db.ObjectId.createFromHexString(id);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  },
+
+  // Validation function
+  validateReward: (rewardData) => {
+    const errors = [];
+
+    // Name validation
+    if (!rewardData.name || rewardData.name.trim().length === 0) {
+      errors.push("Reward name is required");
+    } else if (rewardData.name.length > 50) {
+      errors.push("Name cannot exceed 50 characters");
+    }
+
+    // Description validation
+    if (!rewardData.description || rewardData.description.trim().length === 0) {
+      errors.push("Description is required");
+    } else if (rewardData.description.length > 500) {
+      errors.push("Description cannot exceed 500 characters");
+    }
+
+    // Icon URL validation
+    if (!rewardData.icon) {
+      errors.push("Icon URL is required");
+    } else if (!/^https?:\/\/.+\..+/.test(rewardData.icon)) {
+      errors.push("Please enter a valid URL");
+    }
+
+    // Points validation
+    if (
+      rewardData.pointsRequired === undefined ||
+      rewardData.pointsRequired === null
+    ) {
+      errors.push("Points required is mandatory");
+    } else if (rewardData.pointsRequired < 0) {
+      errors.push("Points cannot be negative");
+    }
+
+    // Rarity validation
+    if (
+      rewardData.rarity &&
+      !["common", "rare", "epic", "legendary"].includes(rewardData.rarity)
+    ) {
+      errors.push("Invalid rarity value");
+    }
+
+    return errors.length ? errors : null;
+  },
+};
+
+export default Reward;

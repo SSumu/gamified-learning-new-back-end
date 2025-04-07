@@ -1,70 +1,134 @@
-import mongoose from "mongoose";
+import { getDb } from "../config/db.mjs";
 
-const challengeSchema = new mongoose.Schema(
-  {
-    title: {
-      type: String,
-      required: [true, "Title is required"],
-      trim: true,
-      maxlength: [100, "Title cannot exceed 100 characters"],
-    },
-    description: {
-      type: String,
-      required: [true, "Description is required"],
-      trim: true,
-    },
-    course: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Course",
-      required: [true, "Course reference is required"],
-    },
-    points: {
-      type: Number,
-      required: [true, "Points value is required"],
-      min: [0, "Points cannot be negative"],
-    },
-    dueDate: {
-      type: Date,
-      validate: {
-        validator: function (value) {
-          return !value || value > Date.now();
-        },
-        message: "Due date must be in the future",
-      },
-    },
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
-    completionCriteria: {
-      type: String,
-      required: [true, "Completion criteria is required"],
-      enum: {
-        values: ["quiz", "assignment", "participation", "other"],
-        message: "{VALUE} is not a valid criteria",
-      },
-    },
-    createdAt: {
-      type: Date,
-      default: Date.now,
-      immutable: true,
-    },
+const collectionName = "challenges";
+
+const Challenge = {
+  // Create a new challenge
+  create: async (challengeData) => {
+    const db = await getDb();
+    const result = await db.collection(collectionName).insertOne(challengeData);
+    return result;
   },
-  {
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true },
-  }
-);
 
-// Indexes for better query performance
-challengeSchema.index({ course: 1, isActive: 1 });
-challengeSchema.index({ dueDate: 1 });
+  // Find all challenges with optional filtering
+  findAll: async (filter = {}) => {
+    const db = await getDb();
+    return await db.collection(collectionName).find(filter).toArray();
+  },
 
-// Virtual property for days remaining
-challengeSchema.virtual("daysRemaining").get(function () {
-  if (!this.dueDate) return null;
-  const diff = this.dueDate - Date.now();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
-});
+  // Find challenge by ID
+  findById: async (id) => {
+    const db = await getDb();
+    return await db.collection(collectionName).findOne({
+      _id: db.ObjectId.createFromHexString(id),
+    });
+  },
 
-export default mongoose.model("Challenge", challengeSchema);
+  // Update challenge
+  update: async (id, updates) => {
+    const db = await getDb();
+    const result = await db
+      .collection(collectionName)
+      .updateOne(
+        { _id: db.ObjectId.createFromHexString(id) },
+        { $set: updates }
+      );
+    return result;
+  },
+
+  // Delete challenge
+  delete: async (id) => {
+    const db = await getDb();
+    const result = await db.collection(collectionName).deleteOne({
+      _id: db.ObjectId.createFromHexString(id),
+    });
+    return result;
+  },
+
+  // Toggle active status
+  toggleActive: async (id) => {
+    const db = await getDb();
+    const challenge = await this.findById(id);
+    if (!challenge) return null;
+
+    const result = await db
+      .collection(collectionName)
+      .updateOne(
+        { _id: db.ObjectId.createFromHexString(id) },
+        { $set: { isActive: !challenge.isActive } }
+      );
+    return result;
+  },
+
+  // Add challenge to course
+  addToCourse: async (challengeId, courseId) => {
+    const db = await getDb();
+    const result = await db
+      .collection("courses")
+      .updateOne(
+        { _id: db.ObjectId.createFromHexString(courseId) },
+        {
+          $addToSet: {
+            challenges: db.ObjectId.createFromHexString(challengeId),
+          },
+        }
+      );
+    return result;
+  },
+
+  // Remove challenge from course
+  removeFromCourse: async (challengeId, courseId) => {
+    const db = await getDb();
+    const result = await db
+      .collection("courses")
+      .updateOne(
+        { _id: db.ObjectId.createFromHexString(courseId) },
+        { $pull: { challenges: db.ObjectId.createFromHexString(challengeId) } }
+      );
+    return result;
+  },
+
+  // Check if ID is valid
+  isValidId: (id) => {
+    try {
+      const db = getDb();
+      db.ObjectId.createFromHexString(id);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  },
+
+  // Validation functions
+  validateChallenge: (challengeData) => {
+    const errors = [];
+    if (!challengeData.title || challengeData.title.length > 100) {
+      errors.push("Title is required and must be <= 100 characters");
+    }
+    if (!challengeData.description) {
+      errors.push("Description is required");
+    }
+    if (!challengeData.course) {
+      errors.push("Course reference is required");
+    }
+    if (!challengeData.points || challengeData.points < 0) {
+      errors.push("Points value is required and must be >= 0");
+    }
+    if (
+      challengeData.dueDate &&
+      new Date(challengeData.dueDate) <= new Date()
+    ) {
+      errors.push("Due date must be in the future");
+    }
+    if (
+      !["quiz", "assignment", "participation", "other"].includes(
+        challengeData.completionCriteria
+      )
+    ) {
+      errors.push("Invalid completion criteria");
+    }
+    return errors.length ? errors : null;
+  },
+};
+
+export default Challenge;
