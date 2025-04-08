@@ -1,19 +1,18 @@
-// routes/userRoutes.js
 import express from "express";
-import { getDb } from "../config/db.js";
+import {
+  getUsers,
+  addUser,
+  updateUser,
+  deleteUser,
+  getUser,
+} from "../controllers/userController.mjs";
 
 const router = express.Router();
 
-// Example route using the database
-router.get("/", async (req, res) => {
-  try {
-    const db = getDb();
-    const users = await db.collection("users").find().toArray();
-    res.json(users);
-  } catch (error) {
-    console.error(error);
-    res.status(500).send("Server error");
-  }
-});
+router.get("/", getUsers);
+router.post("/", addUser);
+router.get("/:id", getUser);
+router.put("/:id", updateUser);
+router.delete("/:id", deleteUser);
 
 export default router;
